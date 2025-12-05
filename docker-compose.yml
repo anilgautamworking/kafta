@@ -1,0 +1,82 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: adly_redis
+    command: redis-server /etc/redis/redis.conf
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./docker/redis.conf:/etc/redis/redis.conf
+    networks:
+      - adly_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mariadb:
+    build:
+      context: .
+      dockerfile: docker/mariadb.Dockerfile
+    container_name: adly_mariadb
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_PASS:-password}
+      - MYSQL_DATABASE=${DB_NAME:-ads}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - ./sql:/docker-entrypoint-initdb.d
+    networks:
+      - adly_network
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  php:
+    build:
+      context: .
+      dockerfile: docker/php.Dockerfile
+    container_name: adly_php
+    depends_on:
+      - redis
+      - mariadb
+    environment:
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - DB_HOST=${DB_HOST:-mariadb}
+      - DB_USER=${DB_USER:-root}
+      - DB_PASS=${DB_PASS:-password}
+      - DB_NAME=${DB_NAME:-ads}
+    volumes:
+      - ./app:/app
+      - ./app/public:/var/www/html:ro
+    networks:
+      - adly_network
+    command: php-fpm
+
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/nginx.Dockerfile
+    container_name: adly_nginx
+    depends_on:
+      - php
+    ports:
+      - "8080:80"
+    volumes:
+      - ./app/public:/var/www/html
+    networks:
+      - adly_network
+
+volumes:
+  redis_data:
+  mariadb_data:
+
+networks:
+  adly_network:
+    driver: bridge
